@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//g/财务bp项目进度/sap-health-monitor/**)",
+      "PowerShell(gh auth token 2>&1)",
+      "Bash(git add *)",
+      "Bash(git commit -m '项目二：财务自助分析看板 — 完整功能上线 *)",
+      "Read(//c/Program Files/**)",
+      "Read(//g/obsidian/项目二/项目二/**)"
+    ]
+  }
+}
