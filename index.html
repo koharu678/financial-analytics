@@ -1,0 +1,1728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>财务自助分析看板</title>
+    <!-- CDN 依赖 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js">
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js">
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js">
+    </script>
+    <style>
+        /* ================================================================
+           Design System — 完全沿用项目一（SAP订单健康度监控）的样式体系
+           两个项目共享同一套 CSS 变量、组件和布局，保证视觉一致。
+           ================================================================ */
+
+        :root {
+            --blue: #2563EB;
+            --blue-dark: #1D4ED8;
+            --blue-light: #EFF6FF;
+            --green: #10B981;
+            --green-bg: #D1FAE5;
+            --green-text: #059669;
+            --red: #EF4444;
+            --red-bg: #FEE2E2;
+            --red-text: #DC2626;
+            --orange: #F59E0B;
+            --orange-light: #FFF7ED;
+            --gray: #6B7280;
+            --gray-bg: #F1F5F9;
+            --gray-text: #475569;
+            --bg: #F8FAFC;
+            --card: #FFFFFF;
+            --text: #1E293B;
+            --text-secondary: #64748B;
+            --text-muted: #94A3B8;
+            --border: #E2E8F0;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+            --shadow-md: 0 4px 6px rgba(0,0,0,0.07), 0 2px 4px rgba(0,0,0,0.06);
+            --radius: 12px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        /* ===== 导航栏 ===== */
+        .navbar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            height: 56px;
+            background: var(--card);
+            border-bottom: 1px solid var(--border);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+        }
+        .navbar-title { font-size: 20px; font-weight: 700; color: var(--text); white-space: nowrap; }
+        .navbar-actions { display: flex; gap: 8px; }
+
+        /* ===== 按钮系统 ===== */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+            font-family: inherit;
+        }
+        .btn:active { transform: scale(0.97); }
+        .btn-primary { background: var(--blue); color: #fff; }
+        .btn-primary:hover { background: var(--blue-dark); }
+        .btn-outline { background: transparent; color: var(--blue); border: 1px solid var(--blue); }
+        .btn-outline:hover { background: var(--blue-light); }
+        .btn-ghost { background: transparent; color: var(--blue); border: none; }
+        .btn-ghost:hover { text-decoration: underline; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+        /* ===== 主容器 ===== */
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+        /* ===== 上传区（项目二的核心入口，比项目一更大更醒目）===== */
+        .upload-zone {
+            border: 2px dashed #CBD5E1;
+            border-radius: var(--radius);
+            background: var(--bg);
+            padding: 40px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-bottom: 24px;
+        }
+        .upload-zone:hover,
+        .upload-zone.drag-over {
+            border-color: var(--blue);
+            background: var(--blue-light);
+        }
+        .upload-zone.uploaded { border-style: solid; border-color: var(--blue); }
+        .upload-zone .upload-icon { font-size: 52px; margin-bottom: 8px; transition: transform 0.2s ease; }
+        .upload-zone.drag-over .upload-icon { transform: scale(1.1); }
+        .upload-zone .upload-text { font-size: 15px; color: var(--text-secondary); }
+        .upload-zone .upload-text strong { color: var(--blue); text-decoration: underline; }
+        .upload-zone .upload-hint { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+        .upload-sample-link {
+            display: inline-block;
+            margin-top: 10px;
+            font-size: 14px;
+            color: var(--blue);
+            cursor: pointer;
+            background: none;
+            border: none;
+            font-family: inherit;
+        }
+        .upload-sample-link:hover { text-decoration: underline; }
+        .upload-filename {
+            display: none;
+            margin-top: 8px;
+            font-size: 13px;
+            color: var(--green-text);
+            font-weight: 500;
+        }
+        .upload-error {
+            display: none;
+            margin-top: 8px;
+            font-size: 13px;
+            color: var(--red-text);
+            font-weight: 500;
+        }
+
+        /* ===== Loading 动画 ===== */
+        .spinner {
+            display: none;
+            width: 24px;
+            height: 24px;
+            border: 3px solid var(--border);
+            border-top-color: var(--blue);
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin: 8px auto;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ===== 区块标题 ===== */
+        .section-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text);
+            margin-bottom: 16px;
+        }
+
+        /* ===== KPI 卡片 ===== */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .kpi-card {
+            background: var(--card);
+            border-radius: var(--radius);
+            padding: 20px;
+            box-shadow: var(--shadow-sm);
+            transition: all 0.2s ease;
+            text-align: center;
+        }
+        .kpi-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+        .kpi-card-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+        .kpi-card-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .kpi-card-value { font-size: 32px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+        .kpi-card-sub { font-size: 13px; color: var(--text-secondary); margin-top: -4px; margin-bottom: 8px; }
+        .kpi-card-bar { height: 4px; border-radius: 2px; background: #F1F5F9; overflow: hidden; }
+        .kpi-card-bar-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+
+        /* ===== 筛选栏 ===== */
+        .filter-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+        .filter-bar label { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
+        .filter-bar select {
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            color: var(--text);
+            background: var(--card);
+            outline: none;
+            cursor: pointer;
+            transition: border-color 0.15s;
+        }
+        .filter-bar select:focus {
+            border-color: var(--blue);
+            box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+        }
+
+        /* ===== 图表区 ===== */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .chart-card {
+            background: var(--card);
+            border-radius: var(--radius);
+            padding: 20px;
+            box-shadow: var(--shadow-sm);
+        }
+        .chart-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+        .chart-card-title { font-size: 16px; font-weight: 600; color: var(--text); }
+        .chart-card-badge {
+            font-size: 11px;
+            color: var(--text-muted);
+            background: var(--bg);
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+        .chart-wrap { position: relative; width: 100%; }
+        .chart-wrap.trend { height: 300px; }
+        .chart-wrap.bar-h { height: 300px; }
+
+        /* ===== 图表空状态 ===== */
+        .chart-empty {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+        .chart-empty .chart-empty-icon { font-size: 36px; margin-bottom: 8px; }
+
+        /* ===== 假设分析卡片 ⭐ ===== */
+        .whatif-card {
+            background: var(--card);
+            border-radius: var(--radius);
+            padding: 24px;
+            box-shadow: var(--shadow-sm);
+            margin-bottom: 24px;
+            border-left: 4px solid var(--blue);
+        }
+        .whatif-title { font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 16px; }
+        .whatif-slider-wrap { margin-bottom: 20px; }
+        .whatif-slider-wrap label { font-size: 14px; color: var(--text-secondary); display: block; margin-bottom: 8px; }
+        .whatif-range-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .whatif-range-row span { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+        .whatif-range-row input[type=range] {
+            flex: 1;
+            -webkit-appearance: none;
+            height: 6px;
+            border-radius: 3px;
+            background: linear-gradient(to right, var(--blue-light), var(--blue), var(--blue-light));
+            outline: none;
+        }
+        .whatif-range-row input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--blue);
+            cursor: pointer;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+        }
+        .whatif-current-val {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--blue);
+            min-width: 50px;
+            text-align: center;
+        }
+        .whatif-compare {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .whatif-box {
+            flex: 1;
+            padding: 16px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .whatif-box.current { background: #F1F5F9; }
+        .whatif-box.adjusted { background: var(--blue-light); }
+        .whatif-box h4 { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
+        .whatif-box .big-num { font-size: 22px; font-weight: 700; color: var(--text); }
+        .whatif-arrow { font-size: 28px; color: var(--blue); flex-shrink: 0; font-weight: 700; }
+        .whatif-delta {
+            text-align: center;
+            margin-top: 12px;
+            font-size: 16px;
+            font-weight: 700;
+        }
+        .whatif-delta.positive { color: var(--green-text); }
+        .whatif-delta.negative { color: var(--red); }
+        .whatif-delta.neutral { color: var(--text-muted); }
+
+        /* ===== 表格区 ===== */
+        .table-card {
+            background: var(--card);
+            border-radius: var(--radius);
+            padding: 20px;
+            box-shadow: var(--shadow-sm);
+            margin-bottom: 24px;
+        }
+        .table-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .table-toolbar select,
+        .table-toolbar input {
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            color: var(--text);
+            background: var(--card);
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .table-toolbar select:focus,
+        .table-toolbar input:focus {
+            border-color: var(--blue);
+            box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+        }
+        .search-wrap { position: relative; flex: 1; min-width: 200px; }
+        .search-wrap input { width: 100%; padding-right: 32px; }
+        .search-clear {
+            position: absolute;
+            right: 8px; top: 50%; transform: translateY(-50%);
+            cursor: pointer; color: var(--text-muted);
+            background: none; border: none; font-size: 16px; display: none; line-height: 1;
+        }
+        .btn-export { background: var(--green); color: #fff; }
+        .btn-export:hover { background: #059669; }
+        .table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid var(--border); }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        thead th {
+            background: #F8FAFC; padding: 10px 12px; text-align: left;
+            font-weight: 600; font-size: 12px; color: var(--text-secondary);
+            border-bottom: 1px solid var(--border); white-space: nowrap;
+            cursor: pointer; user-select: none;
+        }
+        thead th:hover { background: #EFF6FF; }
+        thead th.right { text-align: right; }
+        thead th.center { text-align: center; }
+        thead th .sort-arrow { font-size: 10px; margin-left: 4px; }
+        tbody td { padding: 10px 12px; border-bottom: 1px solid #F1F5F9; white-space: nowrap; }
+        tbody td.right { text-align: right; }
+        tbody td.center { text-align: center; }
+        tbody tr:hover { background: #F8FAFC; }
+
+        /* 分页 */
+        .pagination {
+            display: flex; align-items: center; justify-content: center;
+            gap: 12px; margin-top: 16px; font-size: 13px; color: var(--text-secondary);
+        }
+        .pagination .page-btn {
+            padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px;
+            background: var(--card); cursor: pointer; font-size: 13px;
+            font-family: inherit; transition: all 0.15s;
+        }
+        .pagination .page-btn:hover:not(:disabled) { background: var(--blue-light); border-color: var(--blue); }
+        .pagination .page-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+        .pagination .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* 空状态 */
+        .empty-state { text-align: center; padding: 40px; color: var(--text-muted); }
+        .empty-state .empty-state-icon { font-size: 40px; margin-bottom: 8px; }
+
+        /* ===== 优化对比 ===== */
+        .compare-card {
+            background: var(--card); border-radius: var(--radius);
+            padding: 24px; box-shadow: var(--shadow-sm); margin-bottom: 24px;
+        }
+        .compare-title { font-size: 20px; font-weight: 600; color: var(--text); margin-bottom: 16px; }
+        .compare-row { display: flex; align-items: center; gap: 16px; }
+        .compare-box { flex: 1; padding: 20px; border-radius: var(--radius); text-align: center; }
+        .compare-box.before { background: #F1F5F9; }
+        .compare-box.after { background: var(--blue-light); }
+        .compare-box h4 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+        .compare-box p { font-size: 13px; color: var(--text-secondary); margin: 4px 0; }
+        .compare-arrow { font-size: 32px; color: var(--blue); flex-shrink: 0; font-weight: 700; }
+        .compare-result {
+            text-align: center; margin-top: 16px;
+            font-size: 18px; font-weight: 700; color: var(--green-text);
+        }
+
+        /* ===== 页脚 ===== */
+        .footer {
+            text-align: center; padding: 20px; font-size: 12px;
+            color: var(--text-muted); border-top: 1px solid var(--border); margin-top: 8px;
+        }
+
+        /* ===== 响应式 ===== */
+        @media (max-width: 1024px) {
+            .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 768px) {
+            .container { padding: 16px; }
+            .navbar { padding: 0 16px; }
+            .navbar-title { font-size: 16px; }
+            .btn-text { display: none; }
+            .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+            .kpi-card { padding: 14px; }
+            .kpi-card-value { font-size: 24px; }
+            .charts-grid { grid-template-columns: 1fr; }
+            .whatif-compare { flex-direction: column; }
+            .whatif-arrow { transform: rotate(90deg); }
+            .compare-row { flex-direction: column; }
+            .compare-arrow { transform: rotate(90deg); }
+            .table-toolbar { flex-direction: column; align-items: stretch; }
+            .search-wrap { min-width: unset; }
+            .filter-bar { flex-direction: column; align-items: stretch; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ===== 顶部导航栏 ===== -->
+<nav class="navbar">
+    <span class="navbar-title">📊 财务自助分析看板</span>
+    <div class="navbar-actions">
+        <button class="btn btn-primary" onclick="loadSampleData()" id="btnSample">
+            📂 <span class="btn-text">加载模拟数据</span>
+        </button>
+        <button class="btn btn-outline" onclick="clearAll()" id="btnClear">
+            🗑️ <span class="btn-text">清空</span>
+        </button>
+    </div>
+</nav>
+
+<div class="container">
+
+    <!-- ===== 上传区（核心入口）===== -->
+    <div class="upload-zone" id="uploadZone">
+        <div class="upload-icon" id="uploadIcon">📁</div>
+        <div class="upload-text" id="uploadText">拖拽 CSV / Excel 文件到此处，或 <strong>点击选择文件</strong></div>
+        <div class="upload-hint">支持 .csv 和 .xlsx 格式，上传后自动识别列字段并生成分析</div>
+        <button class="upload-sample-link" id="uploadSampleLink" onclick="event.stopPropagation();loadSampleData();">
+            加载模拟数据 →
+        </button>
+        <div class="spinner" id="spinner"></div>
+        <div class="upload-filename" id="uploadFilename"></div>
+        <div class="upload-error" id="uploadError"></div>
+        <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" hidden>
+    </div>
+
+    <!-- ===== 全局筛选栏（上传数据后显示）===== -->
+    <div class="filter-bar" id="filterBar" style="display:none;">
+        <span style="font-size:14px;font-weight:600;color:var(--text);">🔍 筛选条件</span>
+        <div id="filterSelects" style="display:flex;gap:12px;flex-wrap:wrap;"></div>
+    </div>
+
+    <!-- ===== KPI 摘要卡片（4张）===== -->
+    <h2 class="section-title">📊 KPI 摘要</h2>
+    <div class="kpi-grid" id="kpiGrid">
+        <!-- 卡片1：总收入 -->
+        <div class="kpi-card" id="kpiRevenue">
+            <div class="kpi-card-label">💰 总收入</div>
+            <div class="kpi-card-value">--</div>
+        </div>
+        <!-- 卡片2：总成本 -->
+        <div class="kpi-card" id="kpiCost">
+            <div class="kpi-card-label">📦 总成本</div>
+            <div class="kpi-card-value">--</div>
+        </div>
+        <!-- 卡片3：毛利率 -->
+        <div class="kpi-card" id="kpiMargin">
+            <div class="kpi-card-label"><span class="kpi-card-dot" style="background:#10B981"></span>毛利率</div>
+            <div class="kpi-card-value">--</div>
+            <div class="kpi-card-bar"><div class="kpi-card-bar-fill" id="kpiMarginBar" style="width:0%;background:#10B981"></div></div>
+        </div>
+        <!-- 卡片4：费用率 / 净利率 -->
+        <div class="kpi-card" id="kpiExpense">
+            <div class="kpi-card-label"><span class="kpi-card-dot" style="background:#2563EB"></span>费用率</div>
+            <div class="kpi-card-value">--</div>
+            <div class="kpi-card-bar"><div class="kpi-card-bar-fill" id="kpiExpenseBar" style="width:0%;background:#2563EB"></div></div>
+        </div>
+    </div>
+
+    <!-- ===== 图表区 ===== -->
+    <div class="charts-grid">
+        <!-- 左：月度收入/成本趋势 -->
+        <div class="chart-card">
+            <div class="chart-card-header">
+                <span class="chart-card-title">📈 月度收入/成本趋势</span>
+                <span class="chart-card-badge">Trend</span>
+            </div>
+            <div class="chart-wrap trend" id="trendChartWrap">
+                <div class="chart-empty" id="trendEmpty">
+                    <div class="chart-empty-icon">📊</div>上传数据后自动生成趋势图
+                </div>
+                <canvas id="trendChart" style="display:none;"></canvas>
+            </div>
+        </div>
+        <!-- 右：分类毛利率对比 -->
+        <div class="chart-card">
+            <div class="chart-card-header">
+                <span class="chart-card-title">📊 分类毛利率对比</span>
+                <span class="chart-card-badge">By Category</span>
+            </div>
+            <div class="chart-wrap bar-h" id="barChartWrap">
+                <div class="chart-empty" id="barEmpty">
+                    <div class="chart-empty-icon">📊</div>上传数据后自动生成对比图
+                </div>
+                <canvas id="barChart" style="display:none;"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== 假设分析模块 ⭐ ===== -->
+    <div class="whatif-card" id="whatifCard" style="display:none;">
+        <div class="whatif-title">💡 假设分析（敏感性分析）</div>
+        <div class="whatif-slider-wrap">
+            <label>销售价格调整</label>
+            <div class="whatif-range-row">
+                <span>-20%</span>
+                <input type="range" id="whatifSlider" min="-20" max="20" value="0" step="1">
+                <span>+20%</span>
+                <span class="whatif-current-val" id="whatifCurrentVal">0%</span>
+            </div>
+        </div>
+        <div class="whatif-compare">
+            <div class="whatif-box current">
+                <h4>📋 当前</h4>
+                <div class="big-num" id="whatifCurMargin">--</div>
+                <div style="font-size:12px;color:var(--text-secondary);">毛利率</div>
+                <div class="big-num" style="margin-top:8px;" id="whatifCurProfit">--</div>
+                <div style="font-size:12px;color:var(--text-secondary);">利润</div>
+            </div>
+            <div class="whatif-arrow">→</div>
+            <div class="whatif-box adjusted">
+                <h4>✨ 调整后</h4>
+                <div class="big-num" id="whatifAdjMargin">--</div>
+                <div style="font-size:12px;color:var(--text-secondary);">毛利率</div>
+                <div class="big-num" style="margin-top:8px;" id="whatifAdjProfit">--</div>
+                <div style="font-size:12px;color:var(--text-secondary);">利润</div>
+            </div>
+        </div>
+        <div class="whatif-delta neutral" id="whatifDelta" style="margin-top:12px;">利润变动：0%</div>
+    </div>
+
+    <!-- ===== 数据明细表 ===== -->
+    <div class="table-card" id="tableCard">
+        <div class="chart-card-header" style="margin-bottom:12px;">
+            <span class="chart-card-title">📋 数据明细</span>
+        </div>
+        <div class="table-toolbar">
+            <select id="filterCategory" style="display:none;" onchange="applyFilters()">
+                <option value="all">全部分类</option>
+            </select>
+            <select id="sortBy" onchange="renderTable()">
+                <option value="default">默认排序</option>
+                <option value="revenue-desc">收入 ↓</option>
+                <option value="revenue-asc">收入 ↑</option>
+                <option value="cost-desc">成本 ↓</option>
+                <option value="cost-asc">成本 ↑</option>
+            </select>
+            <div class="search-wrap">
+                <input type="text" id="searchInput" placeholder="🔍 搜索..." oninput="renderTable()">
+                <button class="search-clear" id="searchClear" onclick="clearSearch()">✕</button>
+            </div>
+            <button class="btn btn-export" onclick="exportCSV()">📥 导出 CSV</button>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead id="tableHead"></thead>
+                <tbody id="tableBody">
+                    <tr><td colspan="10" class="empty-state"><div class="empty-state-icon">📋</div>暂无数据，请上传文件或加载模拟数据</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination" id="pagination"></div>
+    </div>
+
+    <!-- ===== 优化对比展示 ===== -->
+    <div class="compare-card">
+        <div class="compare-title">⚡ 流程优化效果</div>
+        <div class="compare-row">
+            <div class="compare-box before">
+                <h4>🔴 优化前</h4>
+                <p>🕐 人工出表、手动汇总</p>
+                <p style="font-size:20px;font-weight:700;color:#EF4444;">≈ 2 小时/周</p>
+                <p>👤 财务手动导出 Excel</p>
+                <p>❌ 口径不一致、易出错</p>
+            </div>
+            <div class="compare-arrow">→</div>
+            <div class="compare-box after">
+                <h4>🟢 优化后</h4>
+                <p>🤖 拖拽上传、自动分析</p>
+                <p style="font-size:20px;font-weight:700;color:#10B981;">≈ 1 分钟</p>
+                <p>🔄 筛选联动、自动刷新</p>
+                <p>✅ 指标口径标准化</p>
+            </div>
+        </div>
+        <div class="compare-result">📉 效率提升 95% &nbsp;|&nbsp; 支持上传即分析</div>
+    </div>
+
+</div>
+
+<!-- ===== 页脚 ===== -->
+<div class="footer">
+    © 2026 财务自助分析看板 &nbsp;|&nbsp; Powered by Vibecoding &nbsp;|&nbsp; 数据为模拟演示数据 &nbsp;|&nbsp; 所有处理均在本地浏览器完成
+</div>
+
+<script>
+// ================================================================
+//  M1 基础 JS 框架 — 全局状态、上传交互、事件绑定
+// ================================================================
+
+console.log('📊 财务自助分析看板 — M1 骨架加载完成');
+
+// ----- 全局状态（AppState 数据模型）-----
+const AppState = {
+    rawData: [],           // 解析后的完整数据
+    columns: [],           // 原始列名
+    mapping: {             // 智能列识别结果
+        dateCol: null,
+        revenueCol: null,
+        costCol: null,
+        expenseCol: null,
+        categoryCols: [],
+    },
+    filters: {},           // 当前筛选 {列名: 值}
+    whatIf: { priceAdjustment: 0 },
+    filteredData: [],      // 应用筛选后的数据
+    kpi: {
+        totalRevenue: 0,
+        totalCost: 0,
+        grossMargin: 0,
+        expenseRate: 0,
+        totalProfit: 0,
+    },
+};
+
+// Chart.js 实例
+let trendChart = null;
+let barChart = null;
+let currentPage = 1;
+const PAGE_SIZE = 15;
+
+// ================================================================
+//  上传区交互
+// ================================================================
+
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+
+// 点击上传区
+uploadZone.addEventListener('click', () => fileInput.click());
+
+// 拖拽事件
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => { uploadZone.classList.remove('drag-over'); });
+uploadZone.addEventListener('drop', e => {
+    e.preventDefault();
+    uploadZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+});
+
+// 文件选择
+fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (file) handleFile(file);
+    fileInput.value = ''; // 允许重复选同一个文件
+});
+
+// ===== 文件处理入口 =====
+function handleFile(file) {
+    console.log('📂 收到文件:', file.name, '大小:', (file.size / 1024).toFixed(1), 'KB');
+
+    // 文件大小限制 10MB
+    if (file.size > 10 * 1024 * 1024) {
+        showError('文件过大，请上传小于 10MB 的文件');
+        return;
+    }
+
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext === 'csv') {
+        parseCSV(file);
+    } else if (ext === 'xlsx' || ext === 'xls') {
+        parseExcel(file);
+    } else {
+        showError('仅支持 CSV 和 Excel (.xlsx/.xls) 格式');
+    }
+}
+
+// ===== CSV 解析 =====
+function parseCSV(file) {
+    showLoading(true);
+    hideError();
+    Papa.parse(file, {
+        header: true,
+        encoding: 'UTF-8',
+        skipEmptyLines: true,
+        complete: results => {
+            showLoading(false);
+            if (!results.data || results.data.length === 0) {
+                showError('文件无数据，请检查文件内容');
+                return;
+            }
+            // 过滤掉全空行
+            const clean = results.data.filter(row => {
+                return Object.values(row).some(v => v !== '' && v !== null && v !== undefined);
+            });
+            if (clean.length === 0) {
+                showError('文件无有效数据行');
+                return;
+            }
+            console.log('✅ CSV 解析完成：', clean.length, '条记录，', results.meta.fields.length, '列');
+            console.log('  列名:', results.meta.fields);
+            processData(clean, results.meta.fields);
+            showUploaded(file.name, clean.length);
+        },
+        error: err => {
+            showLoading(false);
+            showError('CSV 解析失败: ' + err.message);
+        }
+    });
+}
+
+// ===== Excel 解析 =====
+function parseExcel(file) {
+    showLoading(true);
+    hideError();
+    const reader = new FileReader();
+    reader.onload = e => {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const jsonData = XLSX.utils.sheet_to_json(firstSheet, { defval: '' });
+            if (!jsonData || jsonData.length === 0) {
+                showLoading(false);
+                showError('Excel 文件无数据');
+                return;
+            }
+            const columns = Object.keys(jsonData[0]);
+            console.log('✅ Excel 解析完成：', jsonData.length, '条记录，', columns.length, '列');
+            console.log('  列名:', columns);
+            processData(jsonData, columns);
+            showUploaded(file.name, jsonData.length);
+        } catch (err) {
+            showLoading(false);
+            showError('Excel 解析失败: ' + err.message);
+        }
+    };
+    reader.onerror = () => {
+        showLoading(false);
+        showError('文件读取失败');
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+// ===== 加载模拟数据 =====
+function loadSampleData() {
+    console.log('📂 加载内置模拟数据...');
+    showLoading(true);
+    hideError();
+
+    // 生成模拟数据：2年 × 3产品线 × 3区域 = 约108条月度汇总
+    const sampleData = generateSampleData();
+    const columns = Object.keys(sampleData[0]);
+    console.log('✅ 模拟数据生成完成：', sampleData.length, '条记录');
+    console.log('  列名:', columns);
+
+    showLoading(false);
+    processData(sampleData, columns);
+    showUploaded('模拟数据 (SAP 产品线 2025-2026)', sampleData.length);
+}
+
+// ===== 模拟数据生成器 =====
+function generateSampleData() {
+    const products = ['SAP S/4HANA Cloud', 'SAP SuccessFactors', 'SAP Ariba'];
+    const regions = ['华东', '华南', '华北'];
+    const data = [];
+
+    // 每个产品线在不同区域有不同的基准收入
+    const baseRevenue = {
+        'SAP S/4HANA Cloud': { '华东': 850, '华南': 720, '华北': 680 },
+        'SAP SuccessFactors': { '华东': 520, '华南': 480, '华北': 410 },
+        'SAP Ariba': { '华东': 380, '华南': 350, '华北': 310 },
+    };
+    const costRate = {
+        'SAP S/4HANA Cloud': 0.55,
+        'SAP SuccessFactors': 0.48,
+        'SAP Ariba': 0.52,
+    };
+    const expenseRate = {
+        'SAP S/4HANA Cloud': 0.12,
+        'SAP SuccessFactors': 0.15,
+        'SAP Ariba': 0.13,
+    };
+
+    for (let year = 2025; year <= 2026; year++) {
+        for (let month = 1; month <= 12; month++) {
+            for (const product of products) {
+                for (const region of regions) {
+                    const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+                    const base = baseRevenue[product][region];
+                    // 加入随机波动 ±15%
+                    const noise = 1 + (Math.random() - 0.5) * 0.3;
+                    const seasonal = 1 + 0.1 * Math.sin((month - 1) * Math.PI / 6); // 季节性波动
+
+                    const revenue = Math.round(base * noise * seasonal * 100) / 100;
+                    const cost = Math.round(revenue * costRate[product] * 100) / 100;
+                    const expense = Math.round(revenue * expenseRate[product] * 100) / 100;
+
+                    data.push({
+                        '月份': monthStr,
+                        '产品线': product,
+                        '区域': region,
+                        '收入': revenue,
+                        '成本': cost,
+                        '费用': expense,
+                    });
+                }
+            }
+        }
+    }
+
+    return data;
+}
+
+// ===== UI 状态更新 =====
+function showLoading(show) {
+    document.getElementById('spinner').style.display = show ? 'block' : 'none';
+}
+
+function showUploaded(filename, count) {
+    const zone = document.getElementById('uploadZone');
+    const icon = document.getElementById('uploadIcon');
+    const filenameEl = document.getElementById('uploadFilename');
+    zone.classList.add('uploaded');
+    icon.textContent = '✅';
+    filenameEl.textContent = `${filename} (${count} 条记录)`;
+    filenameEl.style.display = 'block';
+    document.getElementById('uploadText').innerHTML = '拖拽新文件到此处替换数据，或 <strong>点击重新选择</strong>';
+    document.getElementById('uploadSampleLink').style.display = 'none';
+}
+
+function showError(msg) {
+    const el = document.getElementById('uploadError');
+    el.textContent = '⚠️ ' + msg;
+    el.style.display = 'block';
+}
+
+function hideError() {
+    document.getElementById('uploadError').style.display = 'none';
+}
+
+// ================================================================
+//  M2 — 智能列识别引擎 + 数据解析
+// ================================================================
+
+// 关键词词典（大小写不敏感）
+const COLUMN_KEYWORDS = {
+    date: ['日期', '月份', '时间', '期间', 'date', 'month', 'year', 'period', '时间范围', '季度'],
+    revenue: ['收入', '营收', '金额', '销售收入', 'revenue', 'sales', 'amount', 'income', '营业额', '主营收入'],
+    cost: ['成本', 'cost', '支出', '营业成本', 'cost of goods', 'cogs'],
+    expense: ['费用', 'expense', '销售费用', '管理费用', '财务费用', '期间费用', '运营费用'],
+    category: ['产品', '产品线', '区域', '地区', '部门', '客户', '类别', '分类', '类型',
+               'category', 'product', 'region', 'dept', 'department', 'customer',
+               '事业部', '大区', '渠道', '品牌'],
+    quantity: ['数量', '销量', '件数', 'qty', 'quantity', 'unit', 'volume', '销售量'],
+};
+
+// 核心：智能列识别
+function identifyColumns(columns) {
+    const mapping = { dateCol: null, revenueCol: null, costCol: null, expenseCol: null, categoryCols: [], quantityCol: null };
+    const used = new Set(); // 防止一列被多重匹配
+
+    // 遍历每个列名，按优先级尝试匹配
+    for (const col of columns) {
+        const colLower = col.toLowerCase().trim();
+
+        // 优先级：date > revenue > cost > expense > category > quantity
+        if (!mapping.dateCol && matchKeyword(colLower, COLUMN_KEYWORDS.date)) {
+            mapping.dateCol = col;
+            used.add(col);
+            continue;
+        }
+        if (!mapping.revenueCol && matchKeyword(colLower, COLUMN_KEYWORDS.revenue)) {
+            mapping.revenueCol = col;
+            used.add(col);
+            continue;
+        }
+        if (!mapping.costCol && matchKeyword(colLower, COLUMN_KEYWORDS.cost)) {
+            mapping.costCol = col;
+            used.add(col);
+            continue;
+        }
+        if (!mapping.expenseCol && matchKeyword(colLower, COLUMN_KEYWORDS.expense)) {
+            mapping.expenseCol = col;
+            used.add(col);
+            continue;
+        }
+        if (matchKeyword(colLower, COLUMN_KEYWORDS.category)) {
+            mapping.categoryCols.push(col);
+            used.add(col);
+            continue;
+        }
+        if (!mapping.quantityCol && matchKeyword(colLower, COLUMN_KEYWORDS.quantity)) {
+            mapping.quantityCol = col;
+            used.add(col);
+            continue;
+        }
+    }
+
+    // 降级策略：如果没识别到收入列，找第一个数值列作为"金额"
+    if (!mapping.revenueCol) {
+        const numericCol = findFirstNumericColumn(columns, used);
+        if (numericCol) {
+            mapping.revenueCol = numericCol;
+            used.add(numericCol);
+        }
+    }
+
+    // 降级策略：如果没识别到成本列，找第二个数值列
+    if (!mapping.costCol) {
+        const numericCol = findFirstNumericColumn(columns, used);
+        if (numericCol) {
+            mapping.costCol = numericCol;
+            used.add(numericCol);
+        }
+    }
+
+    return mapping;
+}
+
+// 关键词匹配（包含匹配）
+function matchKeyword(colName, keywords) {
+    return keywords.some(kw => colName.includes(kw));
+}
+
+// 找第一个未被占用的数值列（用第一行数据做数值测试）
+function findFirstNumericColumn(columns, usedSet) {
+    if (!AppState.rawData || AppState.rawData.length === 0) return null;
+    const firstRow = AppState.rawData[0];
+    for (const col of columns) {
+        if (usedSet.has(col)) continue;
+        const val = firstRow[col];
+        if (val !== '' && val !== null && val !== undefined && !isNaN(parseFloat(String(val).replace(/,/g, '')))) {
+            return col;
+        }
+    }
+    return null;
+}
+
+// 清洗数值：去掉千分位逗号 + 转数字
+function cleanNumber(val) {
+    if (val === null || val === undefined || val === '') return 0;
+    if (typeof val === 'number') return val;
+    const str = String(val).replace(/,/g, '').replace(/[¥￥$]/g, '').trim();
+    const num = parseFloat(str);
+    return isNaN(num) ? 0 : num;
+}
+
+// 格式化：数字千分位
+function fmtNum(n) {
+    if (n === 0) return '0';
+    return new Intl.NumberFormat('zh-CN').format(Math.round(n));
+}
+
+// 格式化：金额（万为单位）
+function fmtMoney(n) {
+    if (Math.abs(n) >= 10000) {
+        return '¥' + (n / 10000).toFixed(0) + '万';
+    }
+    return '¥' + fmtNum(n);
+}
+
+// 格式化：百分比
+function fmtPct(n) {
+    return n.toFixed(1) + '%';
+}
+
+// 主数据处理流程
+function processData(data, columns) {
+    AppState.rawData = data;
+    AppState.columns = columns;
+
+    console.log('🔍 开始智能列识别...');
+    console.log('  列名:', columns);
+    AppState.mapping = identifyColumns(columns);
+    console.log('  识别结果:', AppState.mapping);
+
+    // 重置筛选
+    AppState.filters = {};
+    AppState.whatIf.priceAdjustment = 0;
+
+    // 应用筛选（初始 = 全选）
+    applyFilters();
+
+    // 显示假设分析模块
+    document.getElementById('whatifCard').style.display = 'block';
+    document.getElementById('whatifSlider').value = 0;
+    document.getElementById('whatifCurrentVal').textContent = '0%';
+
+    console.log('✅ 数据预处理完成，KPI 待 M3 计算，图表待 M4 渲染');
+}
+
+// ===== 清空 =====
+function clearAll() {
+    AppState.rawData = [];
+    AppState.columns = [];
+    AppState.mapping = { dateCol: null, revenueCol: null, costCol: null, expenseCol: null, categoryCols: [] };
+    AppState.filters = {};
+    AppState.whatIf = { priceAdjustment: 0 };
+    AppState.filteredData = [];
+    AppState.kpi = { totalRevenue: 0, totalCost: 0, grossMargin: 0, expenseRate: 0, totalProfit: 0 };
+
+    document.getElementById('uploadZone').classList.remove('uploaded');
+    document.getElementById('uploadIcon').textContent = '📁';
+    document.getElementById('uploadFilename').style.display = 'none';
+    document.getElementById('uploadText').innerHTML = '拖拽 CSV / Excel 文件到此处，或 <strong>点击选择文件</strong>';
+    document.getElementById('uploadSampleLink').style.display = 'inline-block';
+    document.getElementById('uploadError').style.display = 'none';
+    document.getElementById('filterBar').style.display = 'none';
+    document.getElementById('whatifCard').style.display = 'none';
+    document.getElementById('whatifSlider').value = 0;
+    document.getElementById('whatifCurrentVal').textContent = '0%';
+
+    // 重置 KPI
+    document.querySelectorAll('#kpiGrid .kpi-card-value').forEach(el => el.textContent = '--');
+    document.querySelectorAll('.kpi-card-bar-fill').forEach(el => el.style.width = '0%');
+    document.getElementById('kpiMargin').querySelector('.kpi-card-label').innerHTML = '<span class="kpi-card-dot" style="background:#10B981"></span>毛利率';
+    document.getElementById('kpiExpense').querySelector('.kpi-card-label').innerHTML = '<span class="kpi-card-dot" style="background:#2563EB"></span>费用率';
+
+    // 重置图表
+    destroyCharts();
+    document.getElementById('trendEmpty').style.display = 'flex';
+    document.getElementById('trendChart').style.display = 'none';
+    document.getElementById('barEmpty').style.display = 'flex';
+    document.getElementById('barChart').style.display = 'none';
+
+    // 重置表格
+    document.getElementById('tableHead').innerHTML = '';
+    document.getElementById('tableBody').innerHTML = '<tr><td colspan="10" class="empty-state"><div class="empty-state-icon">📋</div>暂无数据，请上传文件或加载模拟数据</td></tr>';
+    document.getElementById('pagination').innerHTML = '';
+    document.getElementById('searchInput').value = '';
+
+    console.log('🗑️ 已清空所有数据');
+}
+
+function destroyCharts() {
+    if (trendChart) { trendChart.destroy(); trendChart = null; }
+    if (barChart) { barChart.destroy(); barChart = null; }
+}
+
+// ================================================================
+//  M3 — KPI 计算 + 筛选联动
+// ================================================================
+
+// 筛选入口：从全局筛选下拉框收集选中值 → 过滤数据 → 同步刷新所有视图
+function applyFilters() {
+    const mapping = AppState.mapping;
+    const raw = AppState.rawData;
+
+    if (!raw || raw.length === 0) {
+        AppState.filteredData = [];
+        AppState.kpi = { totalRevenue: 0, totalCost: 0, grossMargin: 0, expenseRate: 0, totalProfit: 0 };
+        updateKPIs();
+        return;
+    }
+
+    // 从下拉框收集筛选条件
+    AppState.filters = {};
+    if (mapping.categoryCols.length > 0) {
+        for (const catCol of mapping.categoryCols) {
+            const sel = document.getElementById('filter_' + catCol);
+            if (sel && sel.value !== 'all') {
+                AppState.filters[catCol] = sel.value;
+            }
+        }
+    }
+
+    // 应用筛选
+    let filtered = raw;
+    for (const [col, val] of Object.entries(AppState.filters)) {
+        filtered = filtered.filter(row => String(row[col] || '') === val);
+    }
+    AppState.filteredData = filtered;
+
+    // 计算 KPI
+    computeKPIs(filtered);
+
+    // 刷新视图
+    updateKPIs();
+    buildFilterBar(); // 确保下拉框选项是最新的
+    updateWhatIf();
+    renderCharts();
+    renderTable();
+
+    console.log('🔍 筛选完成:', filtered.length, '条（原始', raw.length, '条）');
+    console.log('  KPI:', AppState.kpi);
+}
+
+// 核心 KPI 计算
+function computeKPIs(data) {
+    const mapping = AppState.mapping;
+    const kpi = { totalRevenue: 0, totalCost: 0, grossMargin: 0, expenseRate: 0, totalProfit: 0 };
+
+    if (!data || data.length === 0) {
+        AppState.kpi = kpi;
+        return;
+    }
+
+    for (const row of data) {
+        if (mapping.revenueCol) kpi.totalRevenue += cleanNumber(row[mapping.revenueCol]);
+        if (mapping.costCol) kpi.totalCost += cleanNumber(row[mapping.costCol]);
+        if (mapping.expenseCol) kpi.expenseRate += cleanNumber(row[mapping.expenseCol]);
+    }
+
+    kpi.totalProfit = kpi.totalRevenue - kpi.totalCost - kpi.expenseRate;
+    kpi.grossMargin = kpi.totalRevenue > 0 ? (kpi.totalProfit / kpi.totalRevenue) * 100 : 0;
+    kpi.expenseRate = kpi.totalRevenue > 0 ? (kpi.expenseRate / kpi.totalRevenue) * 100 : 0;
+
+    AppState.kpi = kpi;
+}
+
+// 更新 KPI 卡片 DOM
+function updateKPIs() {
+    const kpi = AppState.kpi;
+    const mapping = AppState.mapping;
+
+    // 卡片1: 总收入
+    document.querySelector('#kpiRevenue .kpi-card-value').textContent =
+        kpi.totalRevenue > 0 ? fmtMoney(kpi.totalRevenue) : '--';
+
+    // 卡片2: 总成本
+    document.querySelector('#kpiCost .kpi-card-value').textContent =
+        kpi.totalCost > 0 ? fmtMoney(kpi.totalCost) : '--';
+
+    // 卡片3: 毛利率
+    const marginEl = document.querySelector('#kpiMargin .kpi-card-value');
+    const marginBar = document.getElementById('kpiMarginBar');
+    marginEl.textContent = kpi.totalRevenue > 0 ? fmtPct(kpi.grossMargin) : '--';
+    // 根据毛利率高低变色
+    if (kpi.totalRevenue > 0) {
+        marginBar.style.width = Math.min(Math.abs(kpi.grossMargin), 100) + '%';
+        if (kpi.grossMargin >= 30) {
+            marginBar.style.background = '#10B981';
+            marginEl.style.color = '#059669';
+        } else if (kpi.grossMargin < 15 && kpi.grossMargin >= 0) {
+            marginBar.style.background = '#F59E0B';
+            marginEl.style.color = '#D97706';
+        } else if (kpi.grossMargin < 0) {
+            marginBar.style.background = '#EF4444';
+            marginEl.style.color = '#DC2626';
+        } else {
+            marginBar.style.background = '#10B981';
+            marginEl.style.color = '#059669';
+        }
+    } else {
+        marginBar.style.width = '0%';
+        marginEl.style.color = 'var(--text)';
+    }
+
+    // 卡片4: 费用率（如有费用列）或净利率
+    const expenseCard = document.getElementById('kpiExpense');
+    const expenseLabel = expenseCard.querySelector('.kpi-card-label');
+    const expenseVal = expenseCard.querySelector('.kpi-card-value');
+    const expenseBar = document.getElementById('kpiExpenseBar');
+
+    if (mapping.expenseCol) {
+        expenseLabel.innerHTML = '<span class="kpi-card-dot" style="background:#2563EB"></span>费用率';
+        expenseVal.textContent = kpi.totalRevenue > 0 ? fmtPct(kpi.expenseRate) : '--';
+        expenseBar.style.width = kpi.totalRevenue > 0 ? Math.min(kpi.expenseRate, 100) + '%' : '0%';
+        expenseBar.style.background = '#2563EB';
+    } else {
+        // 降级为净利率
+        expenseLabel.innerHTML = '<span class="kpi-card-dot" style="background:#8B5CF6"></span>净利率';
+        const netMargin = kpi.totalRevenue > 0 ? (kpi.totalProfit / kpi.totalRevenue) * 100 : 0;
+        expenseVal.textContent = kpi.totalRevenue > 0 ? fmtPct(netMargin) : '--';
+        expenseBar.style.width = kpi.totalRevenue > 0 ? Math.min(Math.abs(netMargin), 100) + '%' : '0%';
+        expenseBar.style.background = '#8B5CF6';
+    }
+}
+
+// 构建筛选栏（根据识别到的分类列动态生成下拉框）
+function buildFilterBar() {
+    const mapping = AppState.mapping;
+    const filterBar = document.getElementById('filterBar');
+    const filterSelects = document.getElementById('filterSelects');
+
+    if (!AppState.rawData || AppState.rawData.length === 0 || mapping.categoryCols.length === 0) {
+        filterBar.style.display = 'none';
+        return;
+    }
+
+    filterBar.style.display = 'flex';
+    filterSelects.innerHTML = '';
+
+    for (const catCol of mapping.categoryCols) {
+        // 获取该列的所有唯一值（排序）
+        const values = [...new Set(AppState.rawData.map(row => String(row[catCol] || '')))].filter(v => v).sort();
+
+        const select = document.createElement('select');
+        select.id = 'filter_' + catCol;
+        select.onchange = applyFilters;
+
+        const defaultOpt = document.createElement('option');
+        defaultOpt.value = 'all';
+        defaultOpt.textContent = '全部' + catCol;
+        select.appendChild(defaultOpt);
+
+        for (const val of values) {
+            const opt = document.createElement('option');
+            opt.value = val;
+            opt.textContent = val;
+            // 恢复之前的选择状态
+            if (AppState.filters[catCol] === val) opt.selected = true;
+            select.appendChild(opt);
+        }
+
+        const label = document.createElement('label');
+        label.textContent = catCol + ':';
+        filterSelects.appendChild(label);
+        filterSelects.appendChild(select);
+    }
+
+    console.log('🔧 筛选栏已构建，分类列:', mapping.categoryCols);
+}
+
+// ===== 假设分析滑块 =====
+function updateWhatIf() {
+    const adj = AppState.whatIf.priceAdjustment;
+    const kpi = AppState.kpi;
+
+    document.getElementById('whatifCurrentVal').textContent =
+        (adj >= 0 ? '+' : '') + (adj * 100).toFixed(0) + '%';
+
+    if (kpi.totalRevenue === 0) {
+        document.getElementById('whatifCurMargin').textContent = '--';
+        document.getElementById('whatifCurProfit').textContent = '--';
+        document.getElementById('whatifAdjMargin').textContent = '--';
+        document.getElementById('whatifAdjProfit').textContent = '--';
+        document.getElementById('whatifDelta').textContent = '利润变动：--';
+        document.getElementById('whatifDelta').className = 'whatif-delta neutral';
+        return;
+    }
+
+    // 当前值
+    const curMargin = kpi.grossMargin;
+    const curProfit = kpi.totalProfit;
+    document.getElementById('whatifCurMargin').textContent = fmtPct(curMargin);
+    document.getElementById('whatifCurProfit').textContent = fmtMoney(curProfit);
+
+    // 调整后值
+    const adjRevenue = kpi.totalRevenue * (1 + adj);
+    const adjProfit = adjRevenue - kpi.totalCost - (AppState.mapping.expenseCol ?
+        kpi.totalRevenue * (kpi.expenseRate / 100) : 0);  // 简化：费用也随收入变动
+    const adjMargin = adjRevenue > 0 ? ((adjRevenue - kpi.totalCost) / adjRevenue) * 100 : 0;
+
+    document.getElementById('whatifAdjMargin').textContent = fmtPct(adjMargin);
+    document.getElementById('whatifAdjProfit').textContent = fmtMoney(adjProfit);
+
+    // 变动
+    const delta = curProfit !== 0 ? ((adjProfit - curProfit) / Math.abs(curProfit)) * 100 : (adj * 100);
+    const deltaEl = document.getElementById('whatifDelta');
+    deltaEl.textContent = '利润变动：' + (delta >= 0 ? '+' : '') + fmtPct(delta);
+    deltaEl.className = 'whatif-delta ' + (delta > 1 ? 'positive' : delta < -1 ? 'negative' : 'neutral');
+}
+
+// 滑块事件绑定
+document.addEventListener('DOMContentLoaded', () => {
+    const slider = document.getElementById('whatifSlider');
+    if (slider) {
+        slider.addEventListener('input', () => {
+            AppState.whatIf.priceAdjustment = parseInt(slider.value) / 100;
+            updateWhatIf();
+            // 图表也随假设分析更新
+            renderCharts();
+        });
+    }
+});
+
+// ================================================================
+//  M4 — 图表渲染（趋势图 + 分类对比图）
+// ================================================================
+
+function renderCharts() {
+    const data = AppState.filteredData;
+    const mapping = AppState.mapping;
+
+    if (!data || data.length === 0 || !mapping.revenueCol) {
+        // 无数据 → 显示空状态
+        destroyCharts();
+        document.getElementById('trendEmpty').style.display = 'flex';
+        document.getElementById('trendChart').style.display = 'none';
+        document.getElementById('barEmpty').style.display = 'flex';
+        document.getElementById('barChart').style.display = 'none';
+        return;
+    }
+
+    renderTrendChart(data, mapping);
+    renderBarChart(data, mapping);
+}
+
+// 趋势图：月度收入/成本（折线 + 柱状混合）
+function renderTrendChart(data, mapping) {
+    destroyChart('trend');
+    document.getElementById('trendEmpty').style.display = 'none';
+    document.getElementById('trendChart').style.display = 'block';
+
+    const ctx = document.getElementById('trendChart').getContext('2d');
+    const adj = AppState.whatIf.priceAdjustment;
+
+    // 按日期列分组聚合
+    const groups = groupByDate(data, mapping.dateCol);
+    const labels = Object.keys(groups);
+
+    // 收入 × (1 + 价格调整)
+    const revenueData = labels.map(label => {
+        const rows = groups[label];
+        return rows.reduce((sum, r) => sum + cleanNumber(r[mapping.revenueCol]) * (1 + adj), 0);
+    });
+    const costData = labels.map(label => {
+        const rows = groups[label];
+        return rows.reduce((sum, r) => sum + (mapping.costCol ? cleanNumber(r[mapping.costCol]) : 0), 0);
+    });
+
+    trendChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: '收入',
+                    data: revenueData,
+                    backgroundColor: 'rgba(37,99,235,0.6)',
+                    borderColor: '#2563EB',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                    order: 2,
+                },
+                {
+                    label: '成本',
+                    data: costData,
+                    type: 'line',
+                    borderColor: '#EF4444',
+                    backgroundColor: 'rgba(239,68,68,0.1)',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#EF4444',
+                    tension: 0.3,
+                    fill: true,
+                    order: 1,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { position: 'bottom', labels: { usePointStyle: true, padding: 20, font: { size: 12 } } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => ctx.dataset.label + ': ' + fmtMoney(ctx.raw),
+                    },
+                },
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: v => v >= 10000 ? (v / 10000).toFixed(1) + '万' : v,
+                        font: { size: 11 },
+                    },
+                    grid: { color: '#F1F5F9' },
+                },
+                x: {
+                    ticks: { font: { size: 10 }, maxRotation: 45 },
+                    grid: { display: false },
+                },
+            },
+        },
+    });
+}
+
+// 分类毛利率对比图（横向条形图）
+function renderBarChart(data, mapping) {
+    destroyChart('bar');
+    document.getElementById('barEmpty').style.display = 'none';
+    document.getElementById('barChart').style.display = 'block';
+
+    const ctx = document.getElementById('barChart').getContext('2d');
+    const adj = AppState.whatIf.priceAdjustment;
+
+    // 按第一个分类列分组
+    const catCol = mapping.categoryCols[0];
+    if (!catCol) {
+        // 无分类列 → 不做分类对比，显示提示
+        document.getElementById('barEmpty').style.display = 'flex';
+        document.getElementById('barChart').style.display = 'none';
+        document.getElementById('barEmpty').querySelector('.chart-empty-icon').textContent = '📊';
+        document.getElementById('barEmpty').querySelector('.chart-empty-icon').nextSibling &&
+            (document.getElementById('barEmpty').innerHTML = '<div class="chart-empty-icon">📊</div><div>需要分类列才能生成对比图</div>');
+        return;
+    }
+
+    const groups = {};
+    for (const row of data) {
+        const key = String(row[catCol] || '未知');
+        if (!groups[key]) groups[key] = { revenue: 0, cost: 0 };
+        groups[key].revenue += cleanNumber(row[mapping.revenueCol]) * (1 + adj);
+        if (mapping.costCol) groups[key].cost += cleanNumber(row[mapping.costCol]);
+    }
+
+    const labels = Object.keys(groups).sort();
+    const margins = labels.map(label => {
+        const g = groups[label];
+        return g.revenue > 0 ? ((g.revenue - g.cost) / g.revenue) * 100 : 0;
+    });
+    // 颜色：绿色 >20%，橙色 0-20%，红色 <0%
+    const colors = margins.map(m => m >= 20 ? 'rgba(16,185,129,0.7)' : m >= 0 ? 'rgba(245,158,11,0.7)' : 'rgba(239,68,68,0.7)');
+    const borderColors = margins.map(m => m >= 20 ? '#10B981' : m >= 0 ? '#F59E0B' : '#EF4444');
+
+    barChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: '毛利率',
+                data: margins,
+                backgroundColor: colors,
+                borderColor: borderColors,
+                borderWidth: 1,
+                borderRadius: 4,
+            }],
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => '毛利率: ' + ctx.raw.toFixed(1) + '%',
+                    },
+                },
+            },
+            scales: {
+                x: {
+                    ticks: { callback: v => v + '%', font: { size: 11 } },
+                    grid: { color: '#F1F5F9' },
+                },
+                y: {
+                    ticks: { font: { size: 12 } },
+                    grid: { display: false },
+                },
+            },
+        },
+    });
+}
+
+// 按日期列分组
+function groupByDate(data, dateCol) {
+    const groups = {};
+    if (!dateCol) {
+        // 无日期列，按行号分组（每5行一组）
+        for (let i = 0; i < data.length; i++) {
+            const key = '第' + (Math.floor(i / 5) * 5 + 1) + '-' + Math.min((Math.floor(i / 5) + 1) * 5, data.length) + '行';
+            if (!groups[key]) groups[key] = [];
+            groups[key].push(data[i]);
+        }
+        return groups;
+    }
+    for (const row of data) {
+        let key = String(row[dateCol] || '');
+        // 截取前7个字符（YYYY-MM）做月度聚合
+        if (key.length >= 7) key = key.substring(0, 7);
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(row);
+    }
+    // 按 key 排序
+    const sorted = {};
+    Object.keys(groups).sort().forEach(k => { sorted[k] = groups[k]; });
+    return sorted;
+}
+
+// 销毁单个图表
+function destroyChart(type) {
+    if (type === 'trend' && trendChart) { trendChart.destroy(); trendChart = null; }
+    if (type === 'bar' && barChart) { barChart.destroy(); barChart = null; }
+}
+
+// ================================================================
+//  M6 — 数据明细表 + 排序 + 搜索 + 分页 + 导出
+// ================================================================
+
+function renderTable() {
+    const data = AppState.filteredData;
+    const columns = AppState.columns;
+
+    if (!data || data.length === 0) {
+        document.getElementById('tableHead').innerHTML = '';
+        document.getElementById('tableBody').innerHTML = '<tr><td colspan="10" class="empty-state"><div class="empty-state-icon">📋</div>暂无数据，请上传文件或加载模拟数据</td></tr>';
+        document.getElementById('pagination').innerHTML = '';
+        return;
+    }
+
+    // 搜索过滤
+    const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
+    let filtered = data;
+    if (searchTerm) {
+        filtered = data.filter(row =>
+            Object.values(row).some(v => String(v || '').toLowerCase().includes(searchTerm))
+        );
+        document.getElementById('searchClear').style.display = 'block';
+    } else {
+        document.getElementById('searchClear').style.display = 'none';
+    }
+
+    // 排序
+    const sortVal = document.getElementById('sortBy').value;
+    const sorted = sortData(filtered, sortVal, AppState.mapping);
+
+    // 分页
+    const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+    if (currentPage > totalPages) currentPage = totalPages;
+    const start = (currentPage - 1) * PAGE_SIZE;
+    const pageData = sorted.slice(start, start + PAGE_SIZE);
+
+    // 渲染表头
+    renderTableHead(columns);
+
+    // 渲染表体
+    const tbody = document.getElementById('tableBody');
+    tbody.innerHTML = '';
+    if (pageData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="' + (columns.length + 1) + '" class="empty-state"><div class="empty-state-icon">🔍</div>无匹配结果</td></tr>';
+    } else {
+        pageData.forEach((row, i) => {
+            const tr = document.createElement('tr');
+            // 行号
+            const tdNum = document.createElement('td');
+            tdNum.className = 'center';
+            tdNum.textContent = start + i + 1;
+            tr.appendChild(tdNum);
+            // 各列
+            for (const col of columns) {
+                const td = document.createElement('td');
+                let val = row[col];
+                // 数值列格式化
+                if (col === AppState.mapping.revenueCol || col === AppState.mapping.costCol || col === AppState.mapping.expenseCol) {
+                    const num = cleanNumber(val);
+                    td.textContent = num > 0 ? fmtMoney(num) : (val || '0');
+                    td.className = 'right';
+                } else {
+                    td.textContent = val !== undefined && val !== null ? String(val) : '';
+                }
+                tr.appendChild(td);
+            }
+            tbody.appendChild(tr);
+        });
+    }
+
+    // 渲染分页器
+    const pagEl = document.getElementById('pagination');
+    if (totalPages <= 1) {
+        pagEl.innerHTML = '<span>共 ' + sorted.length + ' 条</span>';
+    } else {
+        let html = '<span>共 ' + sorted.length + ' 条 | 每页 ' + PAGE_SIZE + ' 条</span>';
+        html += '<button class="page-btn" onclick="goToPage(' + (currentPage - 1) + ')"' + (currentPage === 1 ? ' disabled' : '') + '>◀ 上一页</button>';
+        html += '<span>第 ' + currentPage + '/' + totalPages + ' 页</span>';
+        html += '<button class="page-btn" onclick="goToPage(' + (currentPage + 1) + ')"' + (currentPage === totalPages ? ' disabled' : '') + '>下一页 ▶</button>';
+        pagEl.innerHTML = html;
+    }
+}
+
+function renderTableHead(columns) {
+    const thead = document.getElementById('tableHead');
+    thead.innerHTML = '<tr><th class="center">#</th>' +
+        columns.map(col => {
+            let cls = '';
+            if (col === AppState.mapping.revenueCol || col === AppState.mapping.costCol || col === AppState.mapping.expenseCol) {
+                cls = ' class="right"';
+            }
+            return '<th' + cls + '>' + col + '</th>';
+        }).join('') +
+        '</tr>';
+}
+
+function sortData(data, sortVal, mapping) {
+    const sorted = [...data];
+    switch (sortVal) {
+        case 'revenue-desc':
+            if (mapping.revenueCol) sorted.sort((a, b) => cleanNumber(b[mapping.revenueCol]) - cleanNumber(a[mapping.revenueCol]));
+            break;
+        case 'revenue-asc':
+            if (mapping.revenueCol) sorted.sort((a, b) => cleanNumber(a[mapping.revenueCol]) - cleanNumber(b[mapping.revenueCol]));
+            break;
+        case 'cost-desc':
+            if (mapping.costCol) sorted.sort((a, b) => cleanNumber(b[mapping.costCol]) - cleanNumber(a[mapping.costCol]));
+            break;
+        case 'cost-asc':
+            if (mapping.costCol) sorted.sort((a, b) => cleanNumber(a[mapping.costCol]) - cleanNumber(b[mapping.costCol]));
+            break;
+    }
+    return sorted;
+}
+
+function goToPage(page) {
+    const totalPages = Math.max(1, Math.ceil(AppState.filteredData.length / PAGE_SIZE));
+    if (page < 1 || page > totalPages) return;
+    currentPage = page;
+    renderTable();
+}
+
+function clearSearch() {
+    document.getElementById('searchInput').value = '';
+    document.getElementById('searchClear').style.display = 'none';
+    currentPage = 1;
+    renderTable();
+}
+
+// 搜索框事件绑定
+(function() {
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            currentPage = 1;
+            renderTable();
+        });
+    }
+})();
+
+// CSV 导出
+function exportCSV() {
+    const data = AppState.filteredData;
+    const columns = AppState.columns;
+    if (!data || data.length === 0) {
+        alert('无数据可导出');
+        return;
+    }
+
+    // 应用当前搜索
+    const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
+    let exportData = data;
+    if (searchTerm) {
+        exportData = data.filter(row =>
+            Object.values(row).some(v => String(v || '').toLowerCase().includes(searchTerm))
+        );
+    }
+
+    // 构建 CSV 内容
+    let csv = '﻿'; // BOM for Excel 中文兼容
+    csv += columns.join(',') + '\n';
+    for (const row of exportData) {
+        csv += columns.map(col => {
+            let val = String(row[col] || '');
+            // 如果值含逗号或引号，加引号
+            if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+                val = '"' + val.replace(/"/g, '""') + '"';
+            }
+            return val;
+        }).join(',') + '\n';
+    }
+
+    // 触发下载
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '财务分析数据_' + new Date().toISOString().slice(0, 10) + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    console.log('📥 CSV 导出完成:', exportData.length, '条');
+}
+
+// ===== 初始化 =====
+console.log('📊 M1 骨架就绪 — 等待用户上传文件或加载模拟数据');
+console.log('💡 试试点击顶部"📂 加载模拟数据"按钮快速体验');
+</script>
+
+</body>
+</html>
